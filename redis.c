@@ -138,7 +138,6 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
     }
 
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
-
     if (!active_req) {
         if (is_redis_pushed_event(read_info->buf, ret)) {
             bpf_printk("is_redis_pushed_event\n");
@@ -171,6 +170,46 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
             bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             return 0;
         }
+        
+        bpf_map_delete_elem(&active_reads, &id);
+        return 0;
+    }
+
+    e->fd = k.fd;
+    e->pid = k.pid;
+
+    e->method = active_req->method;
+
+    e->protocol = active_req->protocol;
+    
+    // request payload
+    e->payload_size = active_req->payload_size;
+    e->payload_read_complete = active_req->payload_read_complete;
+    
+    // copy req payload
+    bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
+
+    if (read_info->buf) {
+        if (e->protocol == PROTOCOL_REDIS) {
+            if (e->method == METHOD_REDIS_PING) {
+                //e->status =  is_redis_pong(read_info->buf, ret);
+            } else {
+                //e->status = parse_redis_response(read_info->buf, ret);
+                e->method = METHOD_REDIS_COMMAND;
+            }
+        }
+    } else {
+        bpf_map_delete_elem(&active_reads, &id);
+        return 0;
+    }
+
+    bpf_map_delete_elem(&active_reads, &id);
+    bpf_map_delete_elem(&active_l7_requests, &k);
+
+    
+    long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    if (r < 0) {
+        bpf_printk("failed write to l7_events");       
     }
 
     return 0;
@@ -192,5 +231,10 @@ int handle_read(struct trace_event_raw_sys_enter_read* ctx) {
 // /sys/kernel/debug/tracing/events/syscalls/sys_exit_read/format
 SEC("tracepoint/syscalls/sys_exit_read")
 int handle_read_exit(struct trace_event_raw_sys_exit_read* ctx) {
+    return process_exit_of_syscalls_read(ctx, ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_recvfrom")
+int handle_recvfrom_exit(struct trace_event_raw_sys_exit_recvfrom* ctx) {
     return process_exit_of_syscalls_read(ctx, ctx->ret);
 }

@@ -1,19 +1,18 @@
 package main
 
 import (
-	"os"
 	"log"
+	"os"
+	"fmt"
 	"unsafe"
-	"regexp"
-	"github.com/cilium/ebpf/rlimit"
+
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/rlimit"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go redis redis.c
 
-var re *regexp.Regexp
-var keywords = []string{"SELECT", "INSERT INTO", "UPDATE", "DELETE FROM", "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "TRUNCATE TABLE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "CREATE INDEX", "DROP INDEX", "CREATE VIEW", "DROP VIEW", "GRANT", "REVOKE", "EXECUTE"}
 var pgObjs redisObjects
 
 func main() {
@@ -46,6 +45,12 @@ func main() {
 	}
 	defer rexit.Close()
 
+	recvexit, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", pgObjs.HandleRecvfromExit, nil)
+	if err != nil {
+		log.Fatal("link sys_exit_read tracepoint")
+	}
+	defer recvexit.Close()
+
 	L7EventsReader, err := perf.NewReader(pgObjs.L7Events, int(4096)*os.Getpagesize())
 	if err != nil {
 		log.Fatal("error creating perf event array reader")
@@ -70,17 +75,10 @@ func main() {
 		}
 
 		l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
-
-log.Println(l7Event.Protocol)
 		protocol := L7ProtocolConversion(l7Event.Protocol).String()
 
-		// copy payload slice
-		payload := [1024]uint8{}
-		copy(payload[:], l7Event.Payload[:])
-
-		log.Println(protocol)
 		if (protocol == "REDIS") {
-			log.Print(payload)
+			fmt.Println(string(l7Event.Payload[:l7Event.PayloadSize]))
 		}
 	}
 }

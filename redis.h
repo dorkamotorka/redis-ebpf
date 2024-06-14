@@ -96,6 +96,12 @@ struct l7_event {
     __u32 tid;
 };
 
+struct trace_event_raw_sys_exit_recvfrom {
+    __u64 unused;
+    __s32 id;
+    __s64 ret;
+};
+
 static __always_inline
 int is_redis_ping(char *buf, __u64 buf_size) {
     // *1\r\n$4\r\nping\r\n
@@ -180,10 +186,11 @@ int is_redis_command(char *buf, __u64 buf_size) {
 
 static __always_inline
 __u32 is_redis_pushed_event(char *buf, __u64 buf_size){
-    char b[17];
     if (buf_size < 17) {
         return 0;
     }
+
+    char b[17];
     if (bpf_probe_read(&b, sizeof(b), (void *)((char *)buf)) < 0) {
         return 0;
     }
@@ -193,7 +200,7 @@ __u32 is_redis_pushed_event(char *buf, __u64 buf_size){
 
     // In RESP3 protocol, the first byte of the pushed event is '>'
     // whereas in RESP2 protocol, the first byte is '*'
-    if ((b[0] != '>' && b[0] != '*') || b[1] < '0' || b[1] > '9') {
+    if ((b[0] != '>' && b[0] != '*') || b[1] < '0' || b[1] > '9'){
         return 0;
     }
 
@@ -202,7 +209,6 @@ __u32 is_redis_pushed_event(char *buf, __u64 buf_size){
         if (b[4]=='$' && b[5] == '7' && b[6] == '\r' && b[7] == '\n' && b[8] == 'm' && b[9] == 'e' && b[10] == 's' && b[11] == 's' && b[12] == 'a' && b[13] == 'g' && b[14] == 'e' && b[15] == '\r' && b[16] == '\n') {
             return 1;
         } else {
-            bpf_printk("b[4] != '$' && b[5] != '7' && b[6] != '\r' && b[7] != '\n' && b[8] != 'm' && b[9] != 'e' && b[10] != 's' && b[11] != 's' && b[12] != 'a' && b[13] != 'g' && b[14] != 'e' && b[15] != '\r' && b[16] != '\n'\n");
             return 0;
         }
     }
