@@ -71,12 +71,14 @@ func main() {
 
 		l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
+log.Println(l7Event.Protocol)
 		protocol := L7ProtocolConversion(l7Event.Protocol).String()
 
 		// copy payload slice
 		payload := [1024]uint8{}
 		copy(payload[:], l7Event.Payload[:])
 
+		log.Println(protocol)
 		if (protocol == "REDIS") {
 			log.Print(payload)
 		}

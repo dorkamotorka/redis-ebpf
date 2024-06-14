@@ -199,18 +199,13 @@ __u32 is_redis_pushed_event(char *buf, __u64 buf_size){
 
     // CLRF(\r\n) is the seperator in RESP protocol
     if (b[2] == '\r' && b[3] == '\n') {
-        if (b[4]=='$' && b[5] == '7' && b[6] == '\r' && b[7] == '\n' && b[8] == 'm' && b[9] == 'e' && b[10] == 's' && b[11] == 's' && b[12] == 'a' && b[13] == 'g' && b[14] == 'e' && b[15] == '\r' && b[16] == '\n'){
+        if (b[4]=='$' && b[5] == '7' && b[6] == '\r' && b[7] == '\n' && b[8] == 'm' && b[9] == 'e' && b[10] == 's' && b[11] == 's' && b[12] == 'a' && b[13] == 'g' && b[14] == 'e' && b[15] == '\r' && b[16] == '\n') {
             return 1;
-        }else{
+        } else {
+            bpf_printk("b[4] != '$' && b[5] != '7' && b[6] != '\r' && b[7] != '\n' && b[8] != 'm' && b[9] != 'e' && b[10] != 's' && b[11] != 's' && b[12] != 'a' && b[13] != 'g' && b[14] != 'e' && b[15] != '\r' && b[16] != '\n'\n");
             return 0;
         }
     }
-
-    // TODO: long messages ?
-    // // Array length can exceed 9, so check if the second byte is a digit
-    // if (b[2] >= '0' && b[2] <= '9' && b[3] == '\r' && b[4] == '\n') {
-    //     return 1;
-    // }
 
     return 0;
 }

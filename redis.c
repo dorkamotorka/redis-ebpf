@@ -59,9 +59,11 @@ int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payloa
     req->request_type = 0;
     if (buf) {
         if (is_redis_ping(buf, payload_size)){
+            bpf_printk("is_redis_ping\n");
             req->protocol = PROTOCOL_REDIS;
             req->method = METHOD_REDIS_PING;
         }else if (!is_redis_pong(buf, payload_size) && is_redis_command(buf, payload_size)){
+            bpf_printk("is_redis_command/pong\n");
             req->protocol = PROTOCOL_REDIS;
             req->method = METHOD_UNKNOWN;
         }
@@ -138,7 +140,8 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
 
     if (!active_req) {
-        if (is_redis_pushed_event(read_info->buf, ret)){
+        if (is_redis_pushed_event(read_info->buf, ret)) {
+            bpf_printk("is_redis_pushed_event\n");
             // Reset payload
             for (int i = 0; i < MAX_PAYLOAD_SIZE; i++) {
                 e->payload[i] = 0;
@@ -147,10 +150,10 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
             e->method = METHOD_REDIS_PUSHED_EVENT;
             
             bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
-            if (ret > MAX_PAYLOAD_SIZE){
+            if (ret > MAX_PAYLOAD_SIZE) {
                 e->payload_size = MAX_PAYLOAD_SIZE;
                 e->payload_read_complete = 0;
-            }else{
+             } else {
                 e->payload_size = ret;
                 e->payload_read_complete = 1;
             }
