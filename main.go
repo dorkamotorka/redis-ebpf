@@ -3,8 +3,9 @@ package main
 import (
 	"log"
 	"os"
-	"fmt"
 	"unsafe"
+	"bufio"
+	"bytes"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
@@ -45,17 +46,10 @@ func main() {
 	}
 	defer rexit.Close()
 
-	recvexit, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", pgObjs.HandleRecvfromExit, nil)
-	if err != nil {
-		log.Fatal("link sys_exit_read tracepoint")
-	}
-	defer recvexit.Close()
-
 	L7EventsReader, err := perf.NewReader(pgObjs.L7Events, int(4096)*os.Getpagesize())
 	if err != nil {
 		log.Fatal("error creating perf event array reader")
 	}
-
 
 	for {
 		var record perf.Record
@@ -78,7 +72,14 @@ func main() {
 		protocol := L7ProtocolConversion(l7Event.Protocol).String()
 
 		if (protocol == "REDIS") {
-			fmt.Println(string(l7Event.Payload[:l7Event.PayloadSize]))
+			reader := bufio.NewReader(bytes.NewReader(l7Event.Payload[:l7Event.PayloadSize]))
+
+			value, err := ParseRedisProtocol(reader)
+			if err != nil {
+				log.Println("Error:", err)
+			} else {
+				log.Printf("%s\n", value)
+			}
 		}
 	}
 }

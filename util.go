@@ -1,5 +1,13 @@
 package main
 
+import (
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"bufio"
+)
+
 // Order is important
 const (
 	BPF_L7_PROTOCOL_UNKNOWN = iota
@@ -92,4 +100,106 @@ func (e RedisMethodConversion) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+// Redis data types
+const (
+	SimpleStringPrefix = '+'
+	ErrorPrefix        = '-'
+	IntegerPrefix      = ':'
+	BulkStringPrefix   = '$'
+	ArrayPrefix        = '*'
+)
+
+// RedisValue represents a decoded Redis value
+type RedisValue interface{}
+
+// ParseRedisProtocol parses a Redis protocol message
+func ParseRedisProtocol(reader *bufio.Reader) (RedisValue, error) {
+	prefix, err := reader.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+
+	switch prefix {
+	case SimpleStringPrefix:
+		return parseSimpleString(reader)
+	case ErrorPrefix:
+		return parseError(reader)
+	case IntegerPrefix:
+		return parseInteger(reader)
+	case BulkStringPrefix:
+		return parseBulkString(reader)
+	case ArrayPrefix:
+		return parseArray(reader)
+	default:
+		return nil, fmt.Errorf("unknown prefix: %c", prefix)
+	}
+}
+
+func parseSimpleString(reader *bufio.Reader) (string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(line, "\r\n"), nil
+}
+
+func parseError(reader *bufio.Reader) (string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(line, "\r\n"), nil
+}
+
+func parseInteger(reader *bufio.Reader) (int64, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSuffix(line, "\r\n"), 10, 64)
+}
+
+func parseBulkString(reader *bufio.Reader) (string, error) {
+	lengthLine, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	length, err := strconv.Atoi(strings.TrimSuffix(lengthLine, "\r\n"))
+	if err != nil {
+		return "", err
+	}
+	if length == -1 {
+		return "", nil // Null bulk string
+	}
+	data := make([]byte, length+2) // +2 for \r\n
+	if _, err := io.ReadFull(reader, data); err != nil {
+		return "", err
+	}
+	return string(data[:length]), nil
+}
+
+func parseArray(reader *bufio.Reader) ([]RedisValue, error) {
+	lengthLine, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	length, err := strconv.Atoi(strings.TrimSuffix(lengthLine, "\r\n"))
+	if err != nil {
+		return nil, err
+	}
+	if length == -1 {
+		return nil, nil // Null array
+	}
+
+	array := make([]RedisValue, length)
+	for i := 0; i < length; i++ {
+		value, err := ParseRedisProtocol(reader)
+		if err != nil {
+			return nil, err
+		}
+		array[i] = value
+	}
+	return array, nil
 }

@@ -156,10 +156,10 @@ int is_redis_command(char *buf, __u64 buf_size) {
     if (bpf_probe_read(&b, sizeof(b), (void *)((char *)buf)) < 0) {
         return 0;
     }
+
     // Clients send commands to the Redis server as RESP arrays
     // * is the array prefix
     // latter is the number of elements in the array
-    // check if it is a RESP array
     if (b[0] != '*' || b[1] < '0' || b[1] > '9') {
         return 0;
     }
@@ -186,6 +186,7 @@ int is_redis_command(char *buf, __u64 buf_size) {
 
 static __always_inline
 __u32 is_redis_pushed_event(char *buf, __u64 buf_size){
+    //*3\r\n$7\r\nmessage\r\n$10\r\nmy_channel\r\n$13\r\nHello, World!\r\n
     if (buf_size < 17) {
         return 0;
     }
@@ -195,12 +196,9 @@ __u32 is_redis_pushed_event(char *buf, __u64 buf_size){
         return 0;
     }
 
-    //*3\r\n$7\r\nmessage\r\n$10\r\nmy_channel\r\n$13\r\nHello, World!\r\n
-    // message received from the Redis server
-
     // In RESP3 protocol, the first byte of the pushed event is '>'
     // whereas in RESP2 protocol, the first byte is '*'
-    if ((b[0] != '>' && b[0] != '*') || b[1] < '0' || b[1] > '9'){
+    if ((b[0] != '>' && b[0] != '*') || b[1] < '0' || b[1] > '9') {
         return 0;
     }
 
@@ -222,18 +220,18 @@ __u32 parse_redis_response(char *buf, __u64 buf_size) {
     if (bpf_probe_read(&type, sizeof(type), (void *)((char *)buf)) < 0) {
         return STATUS_UNKNOWN;
     }
-    char end[2]; // must end with \r\n
-    
+
+    // must end with \r\n
+    char end[2];
     if (bpf_probe_read(&end, sizeof(end), (void *)((char *)buf+buf_size-2)) < 0) {
         return 0;
     }
-
     if (end[0] != '\r' || end[1] != '\n') {
         return STATUS_UNKNOWN;
     }
 
     // Accepted since RESP2
-    // Array | Integer | Bulk String | Simple String  
+    // Check for types: Array | Integer | Bulk String | Simple String  
     if (type == '*' || type == ':' || type == '$' || type == '+'
     ) {
         return STATUS_SUCCESS;
@@ -241,20 +239,19 @@ __u32 parse_redis_response(char *buf, __u64 buf_size) {
 
     // https://redis.io/docs/latest/develop/reference/protocol-spec/#simple-errors
     // Accepted since RESP2
-    // Error
+    // Check for Error
     if (type == '-') {
         return STATUS_ERROR;
     }
 
     // Accepted since RESP3
-    // Null | Boolean | Double | Big Numbers | Verbatim String | Maps | Set 
+    // Check for types: Null | Boolean | Double | Big Numbers | Verbatim String | Maps | Set 
     if (type == '_' || type == '#' || type == ',' || type =='(' || type == '=' || type == '%' || type == '~') {
         return STATUS_SUCCESS;
     }
 
-
     // Accepted since RESP3
-    // Bulk Errors
+    // Check for Bulk Errors
     if (type == '!') {
         return STATUS_ERROR;
     }

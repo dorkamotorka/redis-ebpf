@@ -76,14 +76,14 @@ func main() {
     if err != nil {
         log.Fatalf("Could not delete keys: %v", err)
     }
-    fmt.Println("Deleted keys")
+    fmt.Println("Deleted keys 'name', 'mylist', 'myhash'")
 
-    // Try to get the value of the deleted key
+    // Try to get the value of the deleted key 'name'
     val, err = rdb.Get(ctx, key).Result()
     if err == redis.Nil {
         fmt.Printf("Key '%s' does not exist - this is good, because we deleted it :) \n", key)
     } else if err != nil {
-        log.Fatalf("Error getting key: %v", err)
+        log.Fatalf("Error getting key 'name': %v", err)
     } else {
         fmt.Printf("Got value for '%s': %s\n", key, val)
     }

@@ -44,7 +44,7 @@ struct {
 
 // Processing enter of write syscall triggered on the client side
 static __always_inline
-int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payload_size){
+int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payload_size) {
     
     // Retrieve the l7_request struct from the eBPF map (check above the map definition, why we use per-CPU array map for this purpose)
     int zero = 0;
@@ -53,19 +53,16 @@ int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payloa
         return 0;
     }
 
-    // Check if the L7 protocol is Postgres otherwise set to unknown
+    // Check if the L7 protocol is RESP otherwise set to unknown
     req->protocol = PROTOCOL_UNKNOWN;
     req->method = METHOD_UNKNOWN;
-    req->request_type = 0;
     if (buf) {
-        if (is_redis_ping(buf, payload_size)){
-            bpf_printk("is_redis_ping\n");
+        if (is_redis_ping(buf, payload_size)) {
             req->protocol = PROTOCOL_REDIS;
             req->method = METHOD_REDIS_PING;
-        }else if (!is_redis_pong(buf, payload_size) && is_redis_command(buf, payload_size)){
-            bpf_printk("is_redis_command/pong\n");
+        } else if (!is_redis_pong(buf, payload_size) && is_redis_command(buf, payload_size)) {
             req->protocol = PROTOCOL_REDIS;
-            req->method = METHOD_UNKNOWN;
+            req->method = METHOD_REDIS_COMMAND;
         }
     }
 
@@ -139,15 +136,16 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
 
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
     if (!active_req) {
+        // Check for RESP push event
         if (is_redis_pushed_event(read_info->buf, ret)) {
-            bpf_printk("is_redis_pushed_event\n");
-            // Reset payload
+            // Reset previous payload value
             for (int i = 0; i < MAX_PAYLOAD_SIZE; i++) {
                 e->payload[i] = 0;
             }
             e->protocol = PROTOCOL_REDIS;
             e->method = METHOD_REDIS_PUSHED_EVENT;
             
+            // Read the payload from the packet and check whether it fit below the MAX_PAYLOAD_SIZE
             bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
             if (ret > MAX_PAYLOAD_SIZE) {
                 e->payload_size = MAX_PAYLOAD_SIZE;
@@ -156,17 +154,10 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
                 e->payload_size = ret;
                 e->payload_read_complete = 1;
             }
-            e->failed = 0; // success
-            e->status = 0;
-            e->fd = k.fd;
-            e->pid = k.pid;
-
-            // for distributed tracing
-            e->seq = 0; // default value
-            e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
             
             bpf_map_delete_elem(&active_reads, &id);
 
+            // Forward the event to the userspace application
             bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             return 0;
         }
@@ -175,26 +166,20 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
         return 0;
     }
 
-    e->fd = k.fd;
-    e->pid = k.pid;
-
     e->method = active_req->method;
-
     e->protocol = active_req->protocol;
     
-    // request payload
+    // Copy Request payload values
     e->payload_size = active_req->payload_size;
     e->payload_read_complete = active_req->payload_read_complete;
-    
-    // copy req payload
     bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
 
     if (read_info->buf) {
         if (e->protocol == PROTOCOL_REDIS) {
             if (e->method == METHOD_REDIS_PING) {
-                //e->status =  is_redis_pong(read_info->buf, ret);
+                e->status =  is_redis_pong(read_info->buf, ret);
             } else {
-                //e->status = parse_redis_response(read_info->buf, ret);
+                e->status = parse_redis_response(read_info->buf, ret);
                 e->method = METHOD_REDIS_COMMAND;
             }
         }
@@ -209,7 +194,7 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
     
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
-        bpf_printk("failed write to l7_events");       
+        bpf_printk("Failed write to l7_events to userspace");       
     }
 
     return 0;
@@ -231,10 +216,5 @@ int handle_read(struct trace_event_raw_sys_enter_read* ctx) {
 // /sys/kernel/debug/tracing/events/syscalls/sys_exit_read/format
 SEC("tracepoint/syscalls/sys_exit_read")
 int handle_read_exit(struct trace_event_raw_sys_exit_read* ctx) {
-    return process_exit_of_syscalls_read(ctx, ctx->ret);
-}
-
-SEC("tracepoint/syscalls/sys_exit_recvfrom")
-int handle_recvfrom_exit(struct trace_event_raw_sys_exit_recvfrom* ctx) {
     return process_exit_of_syscalls_read(ctx, ctx->ret);
 }
