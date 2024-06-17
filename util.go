@@ -203,3 +203,21 @@ func parseArray(reader *bufio.Reader) ([]RedisValue, error) {
 	}
 	return array, nil
 }
+
+// ConvertRedisValueToString converts a RedisValue to a string
+func ConvertValueToString(value RedisValue) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case []RedisValue:
+		strArray := make([]string, len(v))
+		for i, elem := range v {
+			strArray[i] = ConvertValueToString(elem)
+		}
+		return strings.Join(strArray, " ")
+	default:
+		return "Unknown"
+	}
+}

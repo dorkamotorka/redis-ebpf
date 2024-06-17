@@ -21,14 +21,16 @@ func main() {
     })
 
     key := "name"
-    value := "anteon"
+    initialValue := "Ddosify"
+    updatedValue := "Anteon"
 
-    var totalSetTime, totalGetTime, totalDelTime time.Duration
-    const repeat = 1000
+    var totalSetTime, totalGetTime, totalUpdateTime, totalDelTime time.Duration
+    const repeat = 10000
 
     for i := 0; i < repeat; i++ {
+        // SET initial value
         start := time.Now()
-        err := rdb.Set(ctx, key, value, 0).Err()
+        err := rdb.Set(ctx, key, initialValue, 0).Err()
         elapsed := time.Since(start)
         totalSetTime += elapsed
 
@@ -36,15 +38,28 @@ func main() {
             log.Fatalf("Could not set key: %v", err)
         }
 
+        // UPDATE value
+        start = time.Now()
+        err = rdb.Set(ctx, key, updatedValue, 0).Err()
+        elapsed = time.Since(start)
+        totalUpdateTime += elapsed
+        if err != nil {
+            log.Fatalf("Could not update key: %v", err)
+        }
+
+        // GET key
         start = time.Now()
         val, err := rdb.Get(ctx, key).Result()
         elapsed = time.Since(start)
         totalGetTime += elapsed
-
         if err != nil {
             log.Fatalf("Could not get key: %v", err)
         }
+        if val != updatedValue {
+            log.Fatalf("Expected value: %s, but got: %s", updatedValue, val)
+        }
 
+        // DELETE key
         start = time.Now()
         err = rdb.Del(ctx, key).Err()
         elapsed = time.Since(start)
@@ -53,13 +68,10 @@ func main() {
         if err != nil {
             log.Fatalf("Could not delete keys: %v", err)
         }
-
-        if val != value {
-            log.Fatalf("Expected value: %s, but got: %s", value, val)
-        }
     }
 
     fmt.Printf("Average SET latency: %v\n", totalSetTime/time.Duration(repeat))
-    fmt.Printf("Average GET latency: %v\n", totalGetTime/time.Duration(repeat))
+    fmt.Printf("Average UPDATE latency: %v\n", totalUpdateTime/time.Duration(repeat))
+    fmt.Printf("Average GET latency: %v\n", totalGetTime/(2*time.Duration(repeat)))
     fmt.Printf("Average DEL latency: %v\n", totalDelTime/time.Duration(repeat))
 }

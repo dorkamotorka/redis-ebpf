@@ -78,7 +78,7 @@ func main() {
 			if err != nil {
 				log.Println("Error:", err)
 			} else {
-				log.Printf("%s\n", value)
+				log.Printf("%s\n", ConvertValueToString(value))
 			}
 		}
 	}
