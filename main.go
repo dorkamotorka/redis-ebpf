@@ -34,6 +34,12 @@ func main() {
 	}
 	defer w.Close()
 
+	wexit, err := link.Tracepoint("syscalls", "sys_exit_write", pgObjs.HandleWriteExit, nil)
+	if err != nil {
+		log.Fatal("link sys_exit_write tracepoint")
+	}
+	defer wexit.Close()
+
 	r, err := link.Tracepoint("syscalls", "sys_enter_read", pgObjs.HandleRead, nil)
 	if err != nil {
 		log.Fatal("link sys_enter_read tracepoint")
@@ -62,7 +68,6 @@ func main() {
 			log.Printf("lost samples l7-event %d", record.LostSamples)
 		}
 
-		// TODO: investigate why this is happening
 		if record.RawSample == nil || len(record.RawSample) == 0 {
 			log.Print("read sample l7-event nil or empty")
 			return
@@ -78,7 +83,7 @@ func main() {
 			if err != nil {
 				log.Println("Error:", err)
 			} else {
-				log.Printf("%s\n", ConvertValueToString(value))
+				log.Printf("%s, Latency: %d ns\n", ConvertValueToString(value), l7Event.Duration)
 			}
 		}
 	}

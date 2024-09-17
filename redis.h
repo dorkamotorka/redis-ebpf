@@ -24,6 +24,13 @@
 #define METHOD_REDIS_PING     3
 
 
+struct write_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 write_start_ns;
+};
+
 struct trace_entry {
 	short unsigned int type;
 	unsigned char flags;
@@ -61,6 +68,12 @@ struct trace_event_raw_sys_enter_read{
 };
 
 struct trace_event_raw_sys_exit_read {
+    __u64 unused;
+    __s32 id;
+    __s64 ret;
+};
+
+struct trace_event_raw_sys_exit_write {
     __u64 unused;
     __s32 id;
     __s64 ret;

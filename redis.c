@@ -35,6 +35,13 @@ struct {
     __type(value, struct l7_request);
 } active_l7_requests SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u64); // pid_tgid
+    __uint(value_size, sizeof(struct write_args));
+    __uint(max_entries, 10240);
+} active_writes SEC(".maps");
+
 // Map to share l7 events with the userspace application
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -45,7 +52,9 @@ struct {
 // Processing enter of write syscall triggered on the client side
 static __always_inline
 int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payload_size) {
-    
+    __u64 timestamp = bpf_ktime_get_ns();
+    __u64 id = bpf_get_current_pid_tgid();
+
     // Retrieve the l7_request struct from the eBPF map (check above the map definition, why we use per-CPU array map for this purpose)
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
@@ -56,13 +65,24 @@ int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payloa
     // Check if the L7 protocol is RESP otherwise set to unknown
     req->protocol = PROTOCOL_UNKNOWN;
     req->method = METHOD_UNKNOWN;
+    req->write_time_ns = timestamp;
     if (buf) {
         if (is_redis_ping(buf, payload_size)) {
             req->protocol = PROTOCOL_REDIS;
             req->method = METHOD_REDIS_PING;
+
+	    struct write_args args = {};
+            args.fd = fd;
+            args.write_start_ns = timestamp;
+            bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
         } else if (!is_redis_pong(buf, payload_size) && is_redis_command(buf, payload_size)) {
             req->protocol = PROTOCOL_REDIS;
             req->method = METHOD_REDIS_COMMAND;
+
+	    struct write_args args = {};
+            args.fd = fd;
+            args.write_start_ns = timestamp;
+            bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
         }
     }
 
@@ -79,7 +99,6 @@ int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payloa
 
     // Store active L7 request struct for later usage
     struct socket_key k = {};
-    __u64 id = bpf_get_current_pid_tgid();
     k.pid = id >> 32;
     k.fd = fd;
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
@@ -88,6 +107,65 @@ int process_enter_of_syscalls_write(void* ctx, __u64 fd, char* buf, __u64 payloa
     }
 
     return 0;
+}
+
+static __always_inline
+int process_exit_of_syscalls_write(void* ctx, __s64 ret) {
+    __u64 timestamp = bpf_ktime_get_ns();
+    __u64 id = bpf_get_current_pid_tgid();
+
+    struct write_args *active_write = bpf_map_lookup_elem(&active_writes, &id);
+    if (!active_write) {
+        bpf_map_delete_elem(&active_writes, &id);
+        return 0;
+    }
+
+    struct socket_key k = {};
+    k.pid = id >> 32;
+    k.fd = active_write->fd;
+
+    struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
+    if(!active_req) {
+        return 0;
+    }
+
+    if (ret >= 0) {
+    	// write success
+        int zero = 0;
+        struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+        if (!e) {
+            bpf_map_delete_elem(&active_writes, &id);
+            bpf_map_delete_elem(&active_l7_requests, &k);
+            return 0;
+        }
+
+        e->protocol = active_req->protocol;
+        e->fd = k.fd;
+        e->pid = k.pid;
+        e->method = active_req->method;
+        e->failed = 0; // success
+        e->duration = timestamp - active_write->write_start_ns; // total write time
+
+        // request payload
+        e->payload_size = active_req->payload_size;
+        e->payload_read_complete = active_req->payload_read_complete;
+        e->is_tls = 0;
+
+        // copy req payload
+        bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
+
+        bpf_map_delete_elem(&active_l7_requests, &k);
+        bpf_map_delete_elem(&active_writes, &id);
+
+        bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    } else {
+        // write failed
+        bpf_map_delete_elem(&active_writes, &id);
+        bpf_map_delete_elem(&active_l7_requests, &k);
+    }
+
+    return 0;
+
 }
 
 // Processing enter of read syscall triggered on the server side
@@ -205,6 +283,11 @@ int process_exit_of_syscalls_read(void* ctx, __s64 ret) {
 SEC("tracepoint/syscalls/sys_enter_write")
 int handle_write(struct trace_event_raw_sys_enter_write* ctx) {
     return process_enter_of_syscalls_write(ctx, ctx->fd, ctx->buf, ctx->count);
+}
+
+SEC("tracepoint/syscalls/sys_exit_write")
+int handle_write_exit(struct trace_event_raw_sys_exit_write* ctx) {
+    return process_exit_of_syscalls_write(ctx, ctx->ret);
 }
 
 // /sys/kernel/debug/tracing/events/syscalls/sys_enter_read/format
